@@ -1,9 +1,7 @@
 package main
 
 import (
-	"fmt"
 	"log"
-	"net"
 	"os"
 	"strings"
 
@@ -17,19 +15,6 @@ type metricsAdaptor struct {
 }
 
 func (a *metricsAdaptor) makeProviderOrDie(serviceUrls, serviceName, servicePort string) provider.CustomMetricsProvider {
-	var targets []string
-	if serviceUrls != "" {
-		targets = append(targets, strings.Split(serviceUrls,";")...)
-	} else {
-		addresses, err := net.LookupHost(serviceName)
-		if err != nil {
-			log.Fatalf("can't resolve %s", serviceName)
-		}
-		for _, addr := range addresses {
-			targets = append(targets, fmt.Sprintf("http://%s:%s", addr, servicePort))
-		}
-	}
-
 	client, err := a.DynamicClient()
 	if err != nil {
 		log.Fatalf("unable to construct dynamic client: %v", err)
@@ -40,7 +25,12 @@ func (a *metricsAdaptor) makeProviderOrDie(serviceUrls, serviceName, servicePort
 		log.Fatalf("unable to construct discovery REST mapper: %v", err)
 	}
 
-	return NewMetricProvider(targets, client, mapper)
+	var targets []string
+	if serviceUrls != "" {
+		targets = append(targets, strings.Split(serviceUrls,";")...)
+	}
+
+	return NewMetricProvider(&ServiceList{serviceUrls: targets, serviceName: serviceName, servicePort: servicePort}, client, mapper)
 }
 
 func main() {

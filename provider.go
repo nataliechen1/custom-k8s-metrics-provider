@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -33,14 +34,37 @@ const indexBytes = "index_bytes"
 
 // Map of supported metrics to their corresponding output column name.
 var supportedMetrics = map[string]string{
-	heapInUse:               "heap_in_use",
+	heapInUse:              "heap_in_use",
 	numberOfShards:         "number_of_shards",
-	contentBytes:  "content_bytes",
-	indexBytes: "index_bytes",
+	contentBytes:  			"content_bytes",
+	indexBytes: 			"index_bytes",
+}
+
+type ServiceList struct {
+	serviceUrls 		[]string
+	serviceName			string
+	servicePort			string	
+}
+
+func (s *ServiceList) getTargetUrls() ([]string, error) {
+	var targets []string
+	if s.serviceUrls != nil {
+		return s.serviceUrls, nil
+	} else {
+		addresses, err := net.LookupHost(s.serviceName)
+		if err != nil {
+			log.Printf("can't resolve %s", s.serviceName)
+			return nil, err
+		}
+		for _, addr := range addresses {
+			targets = append(targets, fmt.Sprintf("http://%s:%s", addr, s.servicePort))
+		}
+		return targets, nil
+	}
 }
 
 type ZoektMetricsProvider struct {
-	TargetUrls 			[]string
+	serviceList			 *ServiceList
 	client               dynamic.Interface
 	mapper               apimeta.RESTMapper
 	dataMux              sync.Mutex
@@ -48,7 +72,7 @@ type ZoektMetricsProvider struct {
 	supportedMetricInfos []provider.CustomMetricInfo
 }
 
-func NewMetricProvider(targets []string, k8sClient dynamic.Interface, mapper apimeta.RESTMapper) *ZoektMetricsProvider {
+func NewMetricProvider(list *ServiceList, k8sClient dynamic.Interface, mapper apimeta.RESTMapper) *ZoektMetricsProvider {
 	var supportedMetricInfos []provider.CustomMetricInfo
 	for metricName, _ := range supportedMetrics {
 		metricInfo := provider.CustomMetricInfo{
@@ -60,7 +84,7 @@ func NewMetricProvider(targets []string, k8sClient dynamic.Interface, mapper api
 	}
 	
 	provider := &ZoektMetricsProvider {
-		TargetUrls: targets,
+		serviceList: 		  list,
 		client:               k8sClient,
 		mapper:               mapper,
 		podInfo:              make(map[string]map[string]float64),
@@ -150,7 +174,12 @@ func (p *ZoektMetricsProvider) metricFor(value float64, name types.NamespacedNam
 }
 
 func (p *ZoektMetricsProvider) computeMetrics(ctx context.Context) {
-	for _, url := range p.TargetUrls {
+	targets, err := p.serviceList.getTargetUrls()
+	if err != nil {
+		log.Printf("get target urls err: %v", err)
+		return
+	}
+	for _, url := range targets {
 		stats, err := p.getMetrics(ctx, url)
 		if err != nil {
 			log.Printf("get metrics from %s err:%v", url, err)
