@@ -244,12 +244,13 @@ type Stats struct {
 func (p *ZoektMetricsProvider) getMetrics(ctx context.Context, url string) (*Stats, error) {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		DisableKeepAlives: true,
 	}
 	client := &http.Client{
 		Transport: tr,
 	}
 
-	ctx, cancel := context.WithDeadline(ctx, time.Now().Add(30*time.Second))
+	ctx, cancel := context.WithDeadline(ctx, time.Now().Add(5*time.Second))
 	defer cancel()
 
 	req, err := http.NewRequest("GET", url + "/stats", nil)
