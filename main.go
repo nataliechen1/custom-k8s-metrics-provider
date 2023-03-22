@@ -14,7 +14,7 @@ type metricsAdaptor struct {
 	basecmd.AdapterBase
 }
 
-func (a *metricsAdaptor) makeProviderOrDie(serviceUrls, serviceName, servicePort string) provider.CustomMetricsProvider {
+func (a *metricsAdaptor) makeProviderOrDie(serviceUrls, serviceNames string) provider.CustomMetricsProvider {
 	client, err := a.DynamicClient()
 	if err != nil {
 		log.Fatalf("unable to construct dynamic client: %v", err)
@@ -25,12 +25,17 @@ func (a *metricsAdaptor) makeProviderOrDie(serviceUrls, serviceName, servicePort
 		log.Fatalf("unable to construct discovery REST mapper: %v", err)
 	}
 
-	var targets []string
+	var urls []string
 	if serviceUrls != "" {
-		targets = append(targets, strings.Split(serviceUrls,";")...)
+		urls = append(urls, strings.Split(serviceUrls,";")...)
 	}
 
-	return NewMetricProvider(&ServiceList{serviceUrls: targets, serviceName: serviceName, servicePort: servicePort}, client, mapper)
+	var names []string
+	if serviceNames != "" {
+		names = append(names, strings.Split(serviceNames,";")...)
+	}
+
+	return NewMetricProvider(&ServiceList{serviceUrls: urls, serviceNames: names}, client, mapper)
 }
 
 func main() {
@@ -38,17 +43,12 @@ func main() {
 	cmd.Flags().Parse(os.Args)
 
 	serviceUrls := os.Getenv("TARGET_SERVICE_URLS")
-	serviceName := os.Getenv("TARGET_SERVICE_NAME")
-	if serviceName == "" && serviceUrls == "" {
+	serviceNames := os.Getenv("TARGET_SERVICE_NAME")
+	if serviceNames == "" && serviceUrls == "" {
 		log.Fatalln("both `TARGET_SERVICE_URLS` and `TARGET_SERVICE_NAME` are not set.")
 	}
 
-	servicePort := os.Getenv("TARGET_SERVICE_PORT")
-	if servicePort == "" {
-		servicePort = "80"
-	}
-
-	provider := cmd.makeProviderOrDie(serviceUrls, serviceName, servicePort)
+	provider := cmd.makeProviderOrDie(serviceUrls, serviceNames)
 	cmd.WithCustomMetrics(provider)
 
 	log.Println("start custom metrics provider")

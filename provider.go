@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,25 +43,33 @@ var supportedMetrics = map[string]string{
 
 type ServiceList struct {
 	serviceUrls 		[]string
-	serviceName			string
-	servicePort			string	
+	serviceNames		[]string
 }
 
-func (s *ServiceList) getTargetUrls() ([]string, error) {
-	var targets []string
+func (s *ServiceList) getTargetUrls() (map[string][]string, error) {
+	targets := make(map[string][]string)
 	if s.serviceUrls != nil {
-		return s.serviceUrls, nil
+		targets["default"] = s.serviceUrls
 	} else {
-		addresses, err := net.LookupHost(s.serviceName)
-		if err != nil {
-			log.Printf("can't resolve %s", s.serviceName)
-			return nil, err
+		for _, name := range s.serviceNames {
+			ss := strings.Split(name, ":")
+			addresses, err := net.LookupHost(ss[0])
+			if err != nil {
+				log.Printf("can't resolve %s", ss[0])
+				return nil, err
+			}
+			port := "80"
+			if len(ss) > 1 {
+				port = ss[1]
+			}
+			namespace := strings.Split(ss[0], ".")[1]
+			for _, addr := range addresses {
+
+				targets[namespace] = append(targets[namespace], fmt.Sprintf("http://%s:%s", addr, port))
+			}
 		}
-		for _, addr := range addresses {
-			targets = append(targets, fmt.Sprintf("http://%s:%s", addr, s.servicePort))
-		}
-		return targets, nil
 	}
+	return targets, nil
 }
 
 type ZoektMetricsProvider struct {
@@ -106,7 +115,8 @@ func (p *ZoektMetricsProvider) GetMetricByName(ctx context.Context, name types.N
 	p.dataMux.Lock()
 	defer p.dataMux.Unlock()
 
-	podInfo, ok := p.podInfo[name.Name]
+	key := fmt.Sprintf("%s.%s", name.Namespace, name.Name)
+	podInfo, ok := p.podInfo[key]
 	if !ok {
 		log.Printf("%v", p.podInfo)
 		return nil, provider.NewMetricNotFoundForError(info.GroupResource, info.Metric, name.String())
@@ -179,18 +189,21 @@ func (p *ZoektMetricsProvider) computeMetrics(ctx context.Context) {
 		log.Printf("get target urls err: %v", err)
 		return
 	}
-	for _, url := range targets {
-		stats, err := p.getMetrics(ctx, url)
-		if err != nil {
-			log.Printf("get metrics from %s err:%v", url, err)
-			continue
+	for namespace, urls := range targets {
+		for _, url := range urls {
+			stats, err := p.getMetrics(ctx, url)
+			if err != nil {
+				log.Printf("get metrics from %s err:%v", url, err)
+				continue
+			}
+			log.Printf("%s=%+v", url, stats)
+			podName := fmt.Sprintf("%s.%s", namespace, stats.HostName)
+			p.podInfo[podName] = make(map[string]float64, 4)
+			p.podInfo[podName]["heap_in_use"] = float64(stats.HeapInuse)
+			p.podInfo[podName]["number_of_shards"] = float64(stats.RepoStats.Shards)
+			p.podInfo[podName]["content_bytes"] = float64(stats.RepoStats.ContentBytes)
+			p.podInfo[podName]["index_bytes"] = float64(stats.RepoStats.IndexBytes)	
 		}
-		log.Printf("%s=%+v", url, stats)
-		p.podInfo[stats.HostName] = make(map[string]float64, 4)
-		p.podInfo[stats.HostName]["heap_in_use"] = float64(stats.HeapInuse)
-		p.podInfo[stats.HostName]["number_of_shards"] = float64(stats.RepoStats.Shards)
-		p.podInfo[stats.HostName]["content_bytes"] = float64(stats.RepoStats.ContentBytes)
-		p.podInfo[stats.HostName]["index_bytes"] = float64(stats.RepoStats.IndexBytes)
 	}
 }
 
