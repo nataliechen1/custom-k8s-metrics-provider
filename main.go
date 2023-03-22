@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/google/zoekt"
 	"k8s.io/apimachinery/pkg/util/wait"
 	basecmd "sigs.k8s.io/custom-metrics-apiserver/pkg/cmd"
 	"sigs.k8s.io/custom-metrics-apiserver/pkg/provider"
@@ -39,6 +40,7 @@ func (a *metricsAdaptor) makeProviderOrDie(serviceUrls, serviceNames string) pro
 }
 
 func main() {
+	log.Printf("adapter version: %s", zoekt.Version)
 	cmd := &metricsAdaptor{}
 	cmd.Flags().Parse(os.Args)
 

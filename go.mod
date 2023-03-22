@@ -3,6 +3,7 @@ module github.com/nataliechen1/custom-k8s-metrics-provider
 go 1.19
 
 require (
+	github.com/google/zoekt v0.0.0-20211108135652-f8e8ada171c7
 	k8s.io/apimachinery v0.24.3
 	k8s.io/client-go v0.24.3
 	k8s.io/metrics v0.24.3
