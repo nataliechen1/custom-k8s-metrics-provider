@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ const heapInUse = "heap_in_use"
 const numberOfShards = "number_of_shards"
 const contentBytes = "content_bytes"
 const indexBytes = "index_bytes"
+const jvmHeapUsed = "jvm.memory.heap.used"
 
 // Map of supported metrics to their corresponding output column name.
 var supportedMetrics = map[string]string{
@@ -39,6 +41,7 @@ var supportedMetrics = map[string]string{
 	numberOfShards:         "number_of_shards",
 	contentBytes:  			"content_bytes",
 	indexBytes: 			"index_bytes",
+	jvmHeapUsed: 			"jvm.memory.heap.used",
 }
 
 type ServiceList struct {
@@ -191,70 +194,40 @@ func (p *ZoektMetricsProvider) computeMetrics(ctx context.Context) {
 	}
 	for namespace, urls := range targets {
 		for _, url := range urls {
-			stats, err := p.getMetrics(ctx, url)
+			ret, err := p.getMetrics(ctx, url)
 			if err != nil {
 				log.Printf("get metrics from %s err:%v", url, err)
 				continue
 			}
-			log.Printf("%s=%+v", url, stats)
-			podName := fmt.Sprintf("%s.%s", namespace, stats.HostName)
-			p.podInfo[podName] = make(map[string]float64, 4)
-			p.podInfo[podName]["heap_in_use"] = float64(stats.HeapInuse)
-			p.podInfo[podName]["number_of_shards"] = float64(stats.RepoStats.Shards)
-			p.podInfo[podName]["content_bytes"] = float64(stats.RepoStats.ContentBytes)
-			p.podInfo[podName]["index_bytes"] = float64(stats.RepoStats.IndexBytes)	
+			if stats, ok := ret.(map[string]interface{}); ok {
+				log.Printf("url=%s metrics=%+v", url, stats)
+				hostName := fmt.Sprintf("%s", stats["host_name"])
+				podName := fmt.Sprintf("%s.%s", namespace, hostName)
+				if strings.HasPrefix(hostName, "zoekt") {
+					if repoStats, ok := stats["repo_stats"]; ok {
+						p.podInfo[podName] = make(map[string]float64, 4)
+						if _, ok := stats["heap_in_use"]; ok {
+							p.podInfo[podName]["heap_in_use"] = float64(stats["heap_in_use"].(float64))
+						}
+						if repoStatsMap, ok := repoStats.(map[string]interface{}); ok {
+							p.podInfo[podName]["number_of_shards"] = float64(repoStatsMap["Shards"].(float64))
+							p.podInfo[podName]["content_bytes"] = float64(repoStatsMap["ContentBytes"].(float64))
+							p.podInfo[podName]["index_bytes"] = float64(repoStatsMap["IndexBytes"].(float64))
+						}
+					}
+				} else if strings.HasPrefix(hostName, "conav") {
+					p.podInfo[podName] = make(map[string]float64, 3)
+					p.podInfo[podName]["jvm.memory.heap.used"], _ = strconv.ParseFloat(stats["jvm.memory.heap.used"].(string), 64)
+					p.podInfo[podName]["jvm.gc.G1-Old-Generation.time"], _ = strconv.ParseFloat(stats["jvm.gc.G1-Old-Generation.time"].(string), 64)
+					p.podInfo[podName]["jvm.gc.G1-Young-Generation.time"], _ = strconv.ParseFloat(stats["jvm.gc.G1-Young-Generation.time"].(string), 64)
+				}
+				log.Printf("podName=%s stats=%+v", podName, p.podInfo[podName])
+			}
 		}
 	}
 }
 
-type Stats struct {
-	Time int64 `json:"time"`
-	// runtime
-	GoVersion    string `json:"go_version"`
-	GoOs         string `json:"go_os"`
-	GoArch       string `json:"go_arch"`
-	CpuNum       int    `json:"cpu_num"`
-	GoroutineNum int    `json:"goroutine_num"`
-	Gomaxprocs   int    `json:"gomaxprocs"`
-	CgoCallNum   int64  `json:"cgo_call_num"`
-	// memory
-	MemoryAlloc      uint64 `json:"memory_alloc"`
-	MemoryTotalAlloc uint64 `json:"memory_total_alloc"`
-	MemorySys        uint64 `json:"memory_sys"`
-	MemoryLookups    uint64 `json:"memory_lookups"`
-	MemoryMallocs    uint64 `json:"memory_mallocs"`
-	MemoryFrees      uint64 `json:"memory_frees"`
-	// stack
-	StackInUse uint64 `json:"memory_stack"`
-	// heap
-	HeapAlloc    uint64 `json:"heap_alloc"`
-	HeapSys      uint64 `json:"heap_sys"`
-	HeapIdle     uint64 `json:"heap_idle"`
-	HeapInuse    uint64 `json:"heap_inuse"`
-	HeapReleased uint64 `json:"heap_released"`
-	HeapObjects  uint64 `json:"heap_objects"`
-	// garbage collection
-	GcNext           uint64    `json:"gc_next"`
-	GcLast           uint64    `json:"gc_last"`
-	GcNum            uint32    `json:"gc_num"`
-	GcPerSecond      float64   `json:"gc_per_second"`
-	GcPausePerSecond float64   `json:"gc_pause_per_second"`
-	GcPause          []float64 `json:"gc_pause"`
-	// repo stats
-	RepoStats struct {
-		Repos 						int 	`json:"Repos"`
-		Shards 						int		`json:"Shards"`
-		Documents 					int		`json:"Documents"`
-		IndexBytes 					int64	`json:"IndexBytes"`
-		ContentBytes 				int64	`json:"ContentBytes"`
-		NewLinesCount 				uint64	`json:"NewLinesCount"`
-		DefaultBranchNewLinesCount	uint64	`json:"DefaultBranchNewLinesCount"`
-		OtherBranchesNewLinesCount	uint64	`json:"OtherBranchesNewLinesCount"`
-	}`json:"repo_stats"`
-	HostName	string `json:"host_name"`
-}
-
-func (p *ZoektMetricsProvider) getMetrics(ctx context.Context, url string) (*Stats, error) {
+func (p *ZoektMetricsProvider) getMetrics(ctx context.Context, url string) (interface{}, error) {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		DisableKeepAlives: true,
@@ -284,11 +257,11 @@ func (p *ZoektMetricsProvider) getMetrics(ctx context.Context, url string) (*Sta
 	defer resp.Body.Close()
 
     body, err := ioutil.ReadAll(resp.Body) // response body is []byte
-	var result Stats
+	var result interface{}
 	if err := json.Unmarshal(body, &result); err != nil {   // Parse []byte to go struct pointer
     	log.Println("Can not unmarshal JSON")
 		return nil, err
 	}
 
-	return &result, nil
+	return result, nil
 }
