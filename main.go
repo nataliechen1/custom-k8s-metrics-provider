@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -40,6 +41,11 @@ func (a *metricsAdaptor) makeProviderOrDie(serviceUrls, serviceNames string) pro
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "-version" {
+		fmt.Printf("zoekt-metrics-adapter version %q\n", zoekt.Version)
+		os.Exit(0)
+	}
+
 	log.Printf("adapter version: %s", zoekt.Version)
 	cmd := &metricsAdaptor{}
 	cmd.Flags().Parse(os.Args)
