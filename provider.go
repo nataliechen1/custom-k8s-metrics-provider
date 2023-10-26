@@ -164,7 +164,12 @@ func (p *ZoektMetricsProvider) ListAllMetrics() []provider.CustomMetricInfo {
 func (p *ZoektMetricsProvider) runMetricsLoop() {
 	ctx := context.Background()
 	for {
-		p.computeMetrics(ctx)
+		podInfo := p.computeMetrics(ctx)
+		if podInfo != nil {
+			p.dataMux.Lock()
+			p.podInfo = podInfo
+			p.dataMux.Unlock()
+		}
 		<-time.After(15 * time.Second)
 	}
 }
@@ -186,12 +191,13 @@ func (p *ZoektMetricsProvider) metricFor(value float64, name types.NamespacedNam
 	}, nil
 }
 
-func (p *ZoektMetricsProvider) computeMetrics(ctx context.Context) {
+func (p *ZoektMetricsProvider) computeMetrics(ctx context.Context) map[string]map[string]float64 {
 	targets, err := p.serviceList.getTargetUrls()
 	if err != nil {
 		log.Printf("get target urls err: %v", err)
-		return
+		return nil
 	}
+	podInfo := make(map[string]map[string]float64)
 	for namespace, urls := range targets {
 		for _, url := range urls {
 			ret, err := p.getMetrics(ctx, url)
@@ -205,26 +211,27 @@ func (p *ZoektMetricsProvider) computeMetrics(ctx context.Context) {
 				podName := fmt.Sprintf("%s.%s", namespace, hostName)
 				if strings.HasPrefix(hostName, "zoekt") {
 					if repoStats, ok := stats["repo_stats"]; ok {
-						p.podInfo[podName] = make(map[string]float64, 4)
+						podInfo[podName] = make(map[string]float64, 4)
 						if _, ok := stats["heap_in_use"]; ok {
-							p.podInfo[podName]["heap_in_use"] = float64(stats["heap_in_use"].(float64))
+							podInfo[podName]["heap_in_use"] = float64(stats["heap_in_use"].(float64))
 						}
 						if repoStatsMap, ok := repoStats.(map[string]interface{}); ok {
-							p.podInfo[podName]["number_of_shards"] = float64(repoStatsMap["Shards"].(float64))
-							p.podInfo[podName]["content_bytes"] = float64(repoStatsMap["ContentBytes"].(float64))
-							p.podInfo[podName]["index_bytes"] = float64(repoStatsMap["IndexBytes"].(float64))
+							podInfo[podName]["number_of_shards"] = float64(repoStatsMap["Shards"].(float64))
+							podInfo[podName]["content_bytes"] = float64(repoStatsMap["ContentBytes"].(float64))
+							podInfo[podName]["index_bytes"] = float64(repoStatsMap["IndexBytes"].(float64))
 						}
 					}
 				} else if strings.HasPrefix(hostName, "conav") {
-					p.podInfo[podName] = make(map[string]float64, 3)
-					p.podInfo[podName]["jvm.memory.heap.used"], _ = strconv.ParseFloat(stats["jvm.memory.heap.used"].(string), 64)
-					p.podInfo[podName]["jvm.gc.G1-Old-Generation.time"], _ = strconv.ParseFloat(stats["jvm.gc.G1-Old-Generation.time"].(string), 64)
-					p.podInfo[podName]["jvm.gc.G1-Young-Generation.time"], _ = strconv.ParseFloat(stats["jvm.gc.G1-Young-Generation.time"].(string), 64)
+					podInfo[podName] = make(map[string]float64, 3)
+					podInfo[podName]["jvm.memory.heap.used"], _ = strconv.ParseFloat(stats["jvm.memory.heap.used"].(string), 64)
+					podInfo[podName]["jvm.gc.G1-Old-Generation.time"], _ = strconv.ParseFloat(stats["jvm.gc.G1-Old-Generation.time"].(string), 64)
+					podInfo[podName]["jvm.gc.G1-Young-Generation.time"], _ = strconv.ParseFloat(stats["jvm.gc.G1-Young-Generation.time"].(string), 64)
 				}
-				log.Printf("podName=%s stats=%+v", podName, p.podInfo[podName])
+				log.Printf("podName=%s stats=%+v", podName, podInfo[podName])
 			}
 		}
 	}
+	return podInfo
 }
 
 func (p *ZoektMetricsProvider) getMetrics(ctx context.Context, url string) (interface{}, error) {
