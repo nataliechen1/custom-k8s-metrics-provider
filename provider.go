@@ -212,8 +212,8 @@ func (p *ZoektMetricsProvider) computeMetrics(ctx context.Context) map[string]ma
 				if strings.HasPrefix(hostName, "zoekt") {
 					if repoStats, ok := stats["repo_stats"]; ok {
 						podInfo[podName] = make(map[string]float64, 4)
-						if _, ok := stats["heap_in_use"]; ok {
-							podInfo[podName]["heap_in_use"] = float64(stats["heap_in_use"].(float64))
+						if _, ok := stats["heap_inuse"]; ok {
+							podInfo[podName][heapInUse] = float64(stats["heap_inuse"].(float64))
 						}
 						if repoStatsMap, ok := repoStats.(map[string]interface{}); ok {
 							podInfo[podName]["number_of_shards"] = float64(repoStatsMap["Shards"].(float64))
