@@ -34,6 +34,7 @@ const numberOfShards = "number_of_shards"
 const contentBytes = "content_bytes"
 const indexBytes = "index_bytes"
 const jvmHeapUsed = "jvm.memory.heap.used"
+const jvmGcPause = "jvm.gc.pause"
 
 // Map of supported metrics to their corresponding output column name.
 var supportedMetrics = map[string]string{
@@ -42,6 +43,7 @@ var supportedMetrics = map[string]string{
 	contentBytes:  			"content_bytes",
 	indexBytes: 			"index_bytes",
 	jvmHeapUsed: 			"jvm.memory.heap.used",
+	jvmGcPause:				"jvm.gc.pause",
 }
 
 type ServiceList struct {
@@ -216,16 +218,28 @@ func (p *ZoektMetricsProvider) computeMetrics(ctx context.Context) map[string]ma
 							podInfo[podName][heapInUse] = float64(stats["heap_inuse"].(float64))
 						}
 						if repoStatsMap, ok := repoStats.(map[string]interface{}); ok {
-							podInfo[podName]["number_of_shards"] = float64(repoStatsMap["Shards"].(float64))
-							podInfo[podName]["content_bytes"] = float64(repoStatsMap["ContentBytes"].(float64))
-							podInfo[podName]["index_bytes"] = float64(repoStatsMap["IndexBytes"].(float64))
+							podInfo[podName][numberOfShards] = float64(repoStatsMap["Shards"].(float64))
+							podInfo[podName][contentBytes] = float64(repoStatsMap["ContentBytes"].(float64))
+							podInfo[podName][indexBytes] = float64(repoStatsMap["IndexBytes"].(float64))
 						}
 					}
 				} else if strings.HasPrefix(hostName, "conav") {
-					podInfo[podName] = make(map[string]float64, 3)
-					podInfo[podName]["jvm.memory.heap.used"], _ = strconv.ParseFloat(stats["jvm.memory.heap.used"].(string), 64)
+					podInfo[podName] = make(map[string]float64, 4)
+					podInfo[podName][jvmHeapUsed], _ = strconv.ParseFloat(stats["jvm.memory.heap.used"].(string), 64)
 					podInfo[podName]["jvm.gc.G1-Old-Generation.time"], _ = strconv.ParseFloat(stats["jvm.gc.G1-Old-Generation.time"].(string), 64)
 					podInfo[podName]["jvm.gc.G1-Young-Generation.time"], _ = strconv.ParseFloat(stats["jvm.gc.G1-Young-Generation.time"].(string), 64)
+					prevYoungTime := 0.0
+					prevOldTime := 0.0
+					podInfo[podName][jvmGcPause] = 0.0
+					if _, ok := p.podInfo[podName]; ok {
+						if _, ok := p.podInfo[podName]["jvm.gc.G1-Young-Generation.time"]; ok {
+							prevYoungTime, _ = p.podInfo[podName]["jvm.gc.G1-Young-Generation.time"]
+						}
+						if _, ok := p.podInfo[podName]["jvm.gc.G1-Old-Generation.time"]; ok {
+							prevOldTime, _ = p.podInfo[podName]["jvm.gc.G1-Old-Generation.time"]
+						}
+					}
+					podInfo[podName][jvmGcPause] = podInfo[podName]["jvm.gc.G1-Old-Generation.time"] - prevOldTime + podInfo[podName]["jvm.gc.G1-Young-Generation.time"] - prevYoungTime
 				}
 				log.Printf("podName=%s stats=%+v", podName, podInfo[podName])
 			}
